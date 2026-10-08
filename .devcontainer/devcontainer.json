@@ -1,0 +1,6 @@
+{
+  "build": {
+    "dockerfile": "../6-2017-q2-update/Dockerfile"
+  },
+  "features": {}
+}
