@@ -19,6 +19,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 330
+    outputs:
+      release-artifact-id: ${{ steps.upload-build.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -49,10 +51,11 @@ jobs:
       # Persist completed packages before runner tests. The builder packages
       # before its own smoke test, so those files survive either test failure.
       - name: Upload build artifacts
+        id: upload-build
         if: always() && hashFiles('dist/*.tar.xz') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: gcc-6-aarch64-release
+          name: gcc-6-aarch64-release-${{ github.run_attempt }}
           path: |
             dist/*.tar.xz
             dist/SHA256SUMS
@@ -72,7 +75,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: gcc-6-aarch64-logs
+          name: gcc-6-aarch64-logs-${{ github.run_attempt }}
           path: dist/*.log
           if-no-files-found: ignore
           retention-days: 14
@@ -87,8 +90,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: gcc-6-aarch64-release
+          # Reuse the successful build's exact artifact, including when only
+          # this release job is rerun in a later workflow attempt.
+          artifact-ids: ${{ needs.build.outputs.release-artifact-id }}
           path: dist
+          merge-multiple: true
       - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}

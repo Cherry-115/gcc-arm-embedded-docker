@@ -29,13 +29,17 @@ Assets:
 - `SHA256SUMS`: checksums for both archives.
 
 Completed binary/source archives and `SHA256SUMS` are packaged before smoke
-tests and uploaded as the `gcc-6-aarch64-release` Actions artifact before the
-runner test, with 30-day retention. They remain downloadable when either the
+tests and uploaded as the `gcc-6-aarch64-release-<RUN_ATTEMPT>` Actions artifact
+before the runner test, with 30-day retention. They remain downloadable when either the
 container or runner smoke test fails. Failed tests still fail the job and block
 Release publication; artifacts from failed runs are unverified diagnostic builds.
-Build and smoke-test logs are retained for 14 days, including the runner test
-output in `runner-smoke-test.log`. A build failing before packaging has logs but
-may have no complete archives.
+Build and smoke-test logs are retained for 14 days as
+`gcc-6-aarch64-logs-<RUN_ATTEMPT>`, including the runner test output in
+`runner-smoke-test.log`. Attempt-specific names keep earlier packages and logs
+available and prevent duplicate-name failures on reruns. Release publication
+downloads the exact artifact ID from the successful build job, so rerunning
+only the release job also reuses the correct package.
+A build failing before packaging has logs but may have no complete archives.
 The complete source build can take a long time; the job limit is 330 minutes.
 Only downloaded source archives are cached, and their hashes are rechecked on
 all runs, including cache hits.
