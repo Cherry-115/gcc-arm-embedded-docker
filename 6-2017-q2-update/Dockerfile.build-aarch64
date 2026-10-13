@@ -1,0 +1,10 @@
+# GCC 7 / glibc 2.27 can build the unmodified GCC 6-era sources.
+# This image is a disposable builder, not a deployment image.
+FROM ubuntu:18.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool bison flex texinfo \
+    ca-certificates curl bzip2 xz-utils patch python3 file libncurses5-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /recipe
+WORKDIR /build
+ENTRYPOINT ["bash", "/recipe/build-aarch64.sh"]

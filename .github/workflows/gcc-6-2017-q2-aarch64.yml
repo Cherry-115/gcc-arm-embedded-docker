@@ -1,0 +1,136 @@
+name: GCC 6-2017-q2 Linux aarch64
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub Release (master branch only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gcc-6-aarch64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    outputs:
+      release-artifact-id: ${{ steps.upload-build.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check native architecture
+        run: test "$(uname -m)" = aarch64
+      - name: Check pipeline regressions
+        run: python3 -m unittest discover -s 6-2017-q2-update/tests -v
+      - name: Cache verified source downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: downloads
+          key: gcc-6-2017-q2-sources-${{ hashFiles('6-2017-q2-update/sources.lock') }}
+      - name: Build container
+        run: |
+          docker build --platform linux/arm64 \
+            -f 6-2017-q2-update/Dockerfile.build-aarch64 \
+            -t gcc-arm-builder 6-2017-q2-update
+      - name: Build and test toolchain
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p downloads dist
+          docker run --rm --platform linux/arm64 \
+            --mount "type=bind,src=$PWD/downloads,dst=/downloads" \
+            --mount "type=bind,src=$PWD/dist,dst=/out" \
+            -e BUILD_COMMIT -e JOBS=4 gcc-arm-builder
+      # Persist completed packages before runner tests. The builder packages
+      # before its own smoke test, so those files survive either test failure.
+      - name: Upload build artifacts
+        id: upload-build
+        if: always() && hashFiles('dist/*.tar.xz') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gcc-6-aarch64-release-${{ github.run_attempt }}
+          path: |
+            dist/*.tar.xz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Verify archive on current Linux aarch64
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check SHA256SUMS
+          tar -xJf gcc-arm-none-eabi-6-2017-q2-update-aarch64-linux.tar.xz
+          bash ../6-2017-q2-update/smoke-test.sh \
+            "$PWD/gcc-arm-none-eabi-6-2017-q2-update-aarch64-linux" \
+            2>&1 | tee runner-smoke-test.log
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gcc-6-aarch64-logs-${{ github.run_attempt }}
+          path: dist/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    needs: build
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          # Reuse the successful build's exact artifact, including when only
+          # this release job is rerun in a later workflow attempt.
+          artifact-ids: ${{ needs.build.outputs.release-artifact-id }}
+          path: dist
+          merge-multiple: true
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check SHA256SUMS
+          tag="6-2017-q2-update-aarch64-r${RUN_NUMBER}"
+          # A failed publication can resume its draft; published releases are
+          # never overwritten or have their assets replaced on a rerun.
+          if gh release view "$tag" --json isDraft > release.json 2>/dev/null; then
+            if [[ $(jq -r .isDraft release.json) != true ]]; then
+              echo "Release $tag is already published; leaving it unchanged."
+              exit 0
+            fi
+          else
+            cat > notes.md <<EOF
+          Native Linux aarch64 rebuild of GNU Arm Embedded 6-2017-q2-update (GCC 6.3.1).
+
+          - Host: Linux aarch64; target: arm-none-eabi (bare-metal ARM).
+          - Includes C/C++, binutils, newlib, newlib-nano and GDB without Python.
+          - Built in Ubuntu 18.04; tested on Ubuntu 18.04 and Ubuntu 24.04 aarch64.
+          - C/C++ linking, nano libraries and LTO smoke tests passed.
+          - Extract the binary archive and add its bin directory to PATH.
+          - Verify downloads with: sha256sum --check SHA256SUMS
+          - Corresponding source archives and build recipes are included in the sources asset.
+          - Build recipe commit: ${COMMIT}
+
+          This is a community rebuild, not an official Arm binary distribution.
+          EOF
+            gh release create "$tag" --target "$COMMIT" --draft \
+              --title "GNU Arm Embedded 6-2017-q2 — Linux aarch64 (${tag})" \
+              --notes-file notes.md
+          fi
+          gh release upload "$tag" ./*.tar.xz SHA256SUMS --clobber
+          gh release edit "$tag" --draft=false

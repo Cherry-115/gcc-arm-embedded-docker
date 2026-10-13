@@ -70,3 +70,9 @@ docker run --rm -it -v `pwd`:/builds -u `id -u`:`id -g` hardwario/gcc-arm-embedd
 * graphviz
 * python3
 * python3-pip
+
+## Linux aarch64: 6-2017-q2-update
+
+GitHub Actions builds GCC 6.3.1 from source for Linux aarch64 and publishes
+verified toolchains to GitHub Releases. See
+[build, release, and installation instructions](6-2017-q2-update/README-aarch64.md).
