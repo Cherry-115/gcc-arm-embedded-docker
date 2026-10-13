@@ -1,16 +1,6 @@
 name: GCC 6-2017-q2 Linux aarch64
 
 on:
-  push:
-    branches: [master]
-    tags: ['6-2017-q2-update-aarch64-*']
-    paths:
-      - '6-2017-q2-update/**'
-      - '.github/workflows/gcc-6-2017-q2-aarch64.yml'
-  pull_request:
-    paths:
-      - '6-2017-q2-update/**'
-      - '.github/workflows/gcc-6-2017-q2-aarch64.yml'
   workflow_dispatch:
     inputs:
       publish:
@@ -35,6 +25,8 @@ jobs:
           persist-credentials: false
       - name: Check native architecture
         run: test "$(uname -m)" = aarch64
+      - name: Check pipeline regressions
+        run: python3 -m unittest discover -s 6-2017-q2-update/tests -v
       - name: Cache verified source downloads
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -54,22 +46,10 @@ jobs:
             --mount "type=bind,src=$PWD/downloads,dst=/downloads" \
             --mount "type=bind,src=$PWD/dist,dst=/out" \
             -e BUILD_COMMIT -e JOBS=4 gcc-arm-builder
-      - name: Verify archive on current Linux aarch64
-        run: |
-          cd dist
-          sha256sum --check SHA256SUMS
-          tar -xJf gcc-arm-none-eabi-6-2017-q2-update-aarch64-linux.tar.xz
-          bash ../6-2017-q2-update/smoke-test.sh \
-            "$PWD/gcc-arm-none-eabi-6-2017-q2-update-aarch64-linux"
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: gcc-6-aarch64-logs
-          path: dist/*.log
-          if-no-files-found: ignore
-          retention-days: 14
-      - name: Upload release files
+      # Persist completed packages before runner tests. The builder packages
+      # before its own smoke test, so those files survive either test failure.
+      - name: Upload build artifacts
+        if: always() && hashFiles('dist/*.tar.xz') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gcc-6-aarch64-release
@@ -78,14 +58,29 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
+          retention-days: 30
+      - name: Verify archive on current Linux aarch64
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check SHA256SUMS
+          tar -xJf gcc-arm-none-eabi-6-2017-q2-update-aarch64-linux.tar.xz
+          bash ../6-2017-q2-update/smoke-test.sh \
+            "$PWD/gcc-arm-none-eabi-6-2017-q2-update-aarch64-linux" \
+            2>&1 | tee runner-smoke-test.log
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gcc-6-aarch64-logs
+          path: dist/*.log
+          if-no-files-found: ignore
           retention-days: 14
 
   release:
     needs: build
     if: >-
-      (github.event_name == 'push' &&
-       (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/6-2017-q2-update-aarch64-'))) ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/master')
+      github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -99,17 +94,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
           cd dist
           sha256sum --check SHA256SUMS
           tag="6-2017-q2-update-aarch64-r${RUN_NUMBER}"
-          if [[ "$REF_TYPE" == tag ]]; then
-            tag="$REF_NAME"
-          fi
           # A failed publication can resume its draft; published releases are
           # never overwritten or have their assets replaced on a rerun.
           if gh release view "$tag" --json isDraft > release.json 2>/dev/null; then

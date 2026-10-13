@@ -8,14 +8,20 @@ export PATH="$prefix/bin:$PATH"
 [[ $(arm-none-eabi-gcc -dumpversion) == 6.3.1 ]]
 arm-none-eabi-gcc --version
 arm-none-eabi-g++ --version
-arm-none-eabi-gdb --batch -ex 'show version'
 # GCC's driver, compiler backends, linker, debugger and LTO backend must all
 # be native AArch64 executables, not downloaded x86 binaries.
 for binary in "$prefix"/bin/arm-none-eabi-{gcc,g++,as,ld,gdb} \
     "$prefix"/lib/gcc/arm-none-eabi/6.3.1/{cc1,cc1plus,lto1}; do
     file "$binary"
     readelf -h "$binary" | grep -E 'Machine:.*AArch64'
+    dependencies=$(readelf -d "$binary")
+    printf '%s\n' "$dependencies" | grep NEEDED || true
+    if [[ $dependencies =~ lib(tinfo|ncurses|curses)[^]]*\.so ]]; then
+        echo "Unexpected shared terminal library dependency: $binary" >&2
+        exit 1
+    fi
 done
+arm-none-eabi-gdb --batch -ex 'show version'
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 cat > "$scratch/test.c" <<'EOF'

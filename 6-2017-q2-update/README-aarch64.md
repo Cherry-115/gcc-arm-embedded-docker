@@ -8,13 +8,13 @@ bare-metal ARM code. It does not produce AArch64 Linux applications.
 
 Workflow: `.github/workflows/gcc-6-2017-q2-aarch64.yml`.
 
-- Pull requests changing this directory or the workflow build and test only.
-- Matching changes pushed to `master` build, test, and automatically publish a
-  release tagged `6-2017-q2-update-aarch64-r<RUN_NUMBER>`.
-- Pushing a tag named `6-2017-q2-update-aarch64-*` also builds and publishes
-  under that exact tag. Do not reuse tags for different commits.
-- **Actions → GCC 6-2017-q2 Linux aarch64 → Run workflow** supports manual
-  builds. Select `master` and check `publish` to publish; the default is build only.
+- The workflow runs **only by manual dispatch**. Pushes, pull requests and tags
+  do not start builds.
+- **Actions → GCC 6-2017-q2 Linux aarch64 → Run workflow** starts a build.
+  Select `master` and check `publish` to publish after all tests pass; the default
+  is build only. Releases use `6-2017-q2-update-aarch64-r<RUN_NUMBER>` tags.
+  GitHub must have this workflow on the default branch before the manual Run
+  workflow button is available.
 - Release publication uses the workflow's `GITHUB_TOKEN` with `contents: write`.
   No personal access token or repository secret is required. GitHub Actions
   must be enabled and repository/organization policy must allow that permission.
@@ -28,7 +28,14 @@ Assets:
   source archives, dependency sources, checksum lockfile, and exact build recipe.
 - `SHA256SUMS`: checksums for both archives.
 
-Build logs and release files are also retained as Actions artifacts for 14 days.
+Completed binary/source archives and `SHA256SUMS` are packaged before smoke
+tests and uploaded as the `gcc-6-aarch64-release` Actions artifact before the
+runner test, with 30-day retention. They remain downloadable when either the
+container or runner smoke test fails. Failed tests still fail the job and block
+Release publication; artifacts from failed runs are unverified diagnostic builds.
+Build and smoke-test logs are retained for 14 days, including the runner test
+output in `runner-smoke-test.log`. A build failing before packaging has logs but
+may have no complete archives.
 The complete source build can take a long time; the job limit is 330 minutes.
 Only downloaded source archives are cached, and their hashes are rechecked on
 all runs, including cache hits.
@@ -48,7 +55,10 @@ arm-none-eabi-gcc --version
 The builder uses Ubuntu 18.04 (GCC 7, glibc 2.27) for compatibility with these
 2017 sources. Releases are tested inside that container and again on the native
 Ubuntu 24.04 ARM64 Actions runner. GDB's terminal libraries are linked statically
-so it does not require the old `libtinfo.so.5`/`libncurses.so.5` packages.
+so it does not require the old `libtinfo.so.5`/`libncurses.so.5` packages. The
+builder combines ncurses and terminfo objects into `libcurses.a`, matching GDB's
+`-lcurses` configure result. Smoke tests reject shared terminal-library
+dependencies before starting GDB, even when the builder has those libraries.
 
 Included: binutils, C/C++, upstream `rmprofile` multilibs, newlib, newlib-nano,
 normal/nano libstdc++, and GDB. Python-enabled GDB and regenerated HTML/PDF
@@ -90,3 +100,9 @@ Smoke tests check native ELF AArch64 executables, GCC version/target, relocated
 installation, GDB startup, C/C++ linking with LTO for Cortex-M0/M3/M4 hard float,
 and normal/nano libraries for every multilib. Tests compile ARM binaries but do
 not run firmware on physical target hardware.
+
+Fast pipeline regression checks (Python 3, GCC and GNU binutils; no ARM build):
+
+```sh
+python3 -m unittest discover -s 6-2017-q2-update/tests -v
+```

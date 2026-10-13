@@ -37,15 +37,21 @@ python3 "$recipe/prepare-sources.py" "$root" "$jobs"
 cd "$root"
 bash ./build-prerequisites.sh --skip_steps=mingw32 2>&1 | tee /out/prerequisites.log
 # Keep GDB independent of the obsolete libtinfo.so.5 / libncurses.so.5 ABI.
-# These static archives are found before system shared libraries via upstream's
-# -Lbuild-native/host-libs/usr/lib linker flag.
-cp /usr/lib/aarch64-linux-gnu/libtinfo.a /usr/lib/aarch64-linux-gnu/libncurses.a \
-    build-native/host-libs/usr/lib/
+# GDB's configure selects -lcurses before -lncurses. Provide that exact name,
+# including terminfo's objects, so Ubuntu's shared libcurses linker script
+# cannot silently reintroduce dependencies on the old .so.5 libraries.
+ar -M <<EOF
+CREATE build-native/host-libs/usr/lib/libcurses.a
+ADDLIB /usr/lib/aarch64-linux-gnu/libncurses.a
+ADDLIB /usr/lib/aarch64-linux-gnu/libtinfo.a
+SAVE
+END
+EOF
 bash ./build-toolchain.sh --skip_steps=mingw32,gdb-with-python,manual 2>&1 | tee /out/toolchain.log
 
-# Test after relocation, so accidental dependencies on the build prefix fail.
+# Package before testing: /build is removed with the disposable container,
+# while /out is a host mount and preserves the build even if a test fails.
 mv install-native "/build/$archive"
-bash "$recipe/smoke-test.sh" "/build/$archive" 2>&1 | tee /out/smoke-test.log
 cp "$recipe/sources.lock" "/build/$archive/share/doc/gcc-arm-none-eabi/"
 cp /usr/share/doc/libncurses5/copyright \
     "/build/$archive/share/doc/gcc-arm-none-eabi/ncurses-copyright.txt"
@@ -71,3 +77,7 @@ tar -C /build --owner=0 --group=0 -cf - release-sources | xz -T "$jobs" -1 > "/o
 cd /out
 sha256sum "$archive.tar.xz" "$archive-sources.tar.xz" > SHA256SUMS
 sha256sum --check SHA256SUMS
+
+# Test after relocation, so accidental dependencies on the build prefix fail.
+# Keep the failure exit code; unverified artifacts must not become Releases.
+bash "$recipe/smoke-test.sh" "/build/$archive" 2>&1 | tee /out/smoke-test.log
